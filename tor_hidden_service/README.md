@@ -19,6 +19,10 @@ Add the dependency:
     dependencies:
         tor_hidden_service: ^0.0.1
 
+Add this to your AndroidManifest.xml
+
+      android:extractNativeLibs="true"
+
 # Android Setup
 
 1. Permissions
