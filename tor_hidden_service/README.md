@@ -1,111 +1,164 @@
 # Tor Hidden Service — Flutter Plugin
 
-A Flutter plugin that allows your mobile application to host Tor v3 Onion Services and route traffic through the Tor network. Your app can create its own .onion address, communicate through Tor’s encrypted pathways, and surface live bootstrap logs straight to your interface.
+A Flutter plugin that allows your mobile application to host Tor v3 Onion Services and route traffic through the Tor network.
 
-Features
+This plugin enables True P2P on mobile:
 
-• Android support using the Guardian Project’s Tor binaries
+```
+Host: Your app creates a public .onion address that routes to a local server inside your app.
 
-• Host v3 Onion Services directly from Flutter
+Client: Your app can make anonymous requests to other .onion addresses.
+```
 
-• Built-in HTTP proxy on port 9080, compatible with Flutter’s HttpClient
+### Features
 
-• Real-time access to Tor bootstrap logs (5% → 50% → 100%)
+```
+Android Support: Uses the Guardian Project’s Tor binaries.
 
-# Installation
+Host Onion Services: Maps public Onion Port 80 to local port 8080.
+
+HTTP Connect Tunnel: Outbound proxy on port 9080 (Compatible with Flutter HttpClient).
+
+Bootstrap Logs: Real-time access to Tor startup progress.
+```
+
+### Installation
 
 Add the dependency:
+**YAML**
 
-    dependencies:
-        tor_hidden_service: ^0.0.1
+```
+dependencies:
+    tor_hidden_service: ^0.0.2
+```
 
-Add this to your AndroidManifest.xml
+### Android Configuration
 
-      android:extractNativeLibs="true"
+**Update AndroidManifest.xml**
+To ensure the Tor binaries load correctly, add `android:extractNativeLibs="true"` to your `<application>` tag:
+**XML**
 
-# Android Setup
+```
+<application
+    android:label="MyApp"
+    android:extractNativeLibs="true"  ...>
+```
 
-1. Permissions
-   Add the following to android/app/src/main/AndroidManifest.xml:
+**Permissions**
+Add the internet permission to `android/app/src/main/AndroidManifest.xml`:
+**XML**
 
-    
+```
+<uses-permission android:name="android.permission.INTERNENT" />
+```
 
-    <uses-permission android:name="android.permission.INTERNET"/>
+**Gradle Setup (Optional)**
+The plugin usually configures this automatically. If you see build errors regarding missing artifacts, add the Guardian Project repository to `android/build.gradle`:
+**Gradle**
 
+```
+maven { url "https://raw.githubusercontent.com/guardianproject/gpmaven/master" }
+```
 
+---
 
-2. Guardian Project Binaries
-   The Tor binary is not bundled with the plugin. It is downloaded during the build process from the Guardian Project Maven repository.
+### Usage
 
-If your build reports missing Tor dependencies, ensure your Gradle configuration includes:
+#### 1. Start Tor
 
-    maven { url "[https://raw.githubusercontent.com/guardianproject/gpmaven/master](https://raw.githubusercontent.com/guardianproject/gpmaven/master)" }
+Tor must be running before you can host or make requests. Bootstrap takes 20–40 seconds.
+**Dart**
 
-Most projects are automatically configured by the plugin, but some Gradle structures require this line explicitly.
+```dart
+import 'package:tor_hidden_service/tor_hidden_service.dart';
 
+final _torService = TorHiddenService();
 
-# Usage
+// Optional: Listen to bootstrap logs
+_torService.onLog.listen((log) => print("TOR: $log"));
 
-1. Starting the Hidden Service
-   Tor must be running before you can retrieve the onion hostname or issue proxy requests. Bootstrap usually completes within 20–40 seconds.
+await _torService.start();
+```
 
+#### 2. Host a Service (Incoming Traffic)
 
-    import 'package:tor_hidden_service/tor_hidden_service.dart';
-    
-    final _torService = TorHiddenService();
-    
-    _torService.onLog.listen((log) {
-    print("TOR LOG: $log");
-    });
-    
-    try {
-    await _torService.start();
-    print("Tor started successfully!");
-    } catch (e) {
-    print("Failed to start Tor: $e");
-    }
+The plugin automatically maps your generated .onion address (Port 80) to your Localhost Port 8080.
+To receive traffic, simply start a standard HTTP server in Flutter binding to that port.
+**Dart**
 
-2. Getting the Onion Hostname
-   This returns the public .onion URL. Make sure a local server is active on a port such as 8080.
+```dart
+import 'dart:io';
 
+// This server will be accessible via the .onion address!
+HttpServer server = await HttpServer.bind('127.0.0.1', 8080);
+server.listen((request) {
+  request.response.write('Hello from the Onion Network!');
+  request.response.close();
+});
 
-3. Using Tor as an HTTP Proxy
-   You can route outbound requests, including requests to other .onion addresses, through the Tor network:
+// Get your public address
+String? hostname = await _torService.getOnionHostname();
+print("Hosting at: http://$hostname");
+```
 
-        HttpClient client = _torService.getTorHttpClient();
-        
-        try {
-        var request = await client.getUrl(Uri.parse("[https://api.ipify.org](https://api.ipify.org)"));
-        var response = await request.close();
-        var body = await response.transform(utf8.decoder).join();
-        
-        print("My Tor IP is: $body");
-        } catch (e) {
-        print("Request failed: $e");
-        }
+#### 3. Make Requests (Outgoing Traffic)
 
-4. Stopping Tor
+**CRITICAL:** The outbound proxy (Port 9080) is an HTTP Tunnel. It requires the `CONNECT` method. Dart's `HttpClient` only sends `CONNECT` when the URL scheme is **https://**.
 
-    await _torService.stop();
+To make requests to other onion sites, you must:
 
-# Architecture
+* Use `https://` (even if the remote site is HTTP).
+* Trust the self-signed certificate (since Tor handles the encryption, SSL validation fails locally).
 
-This plugin uses Tor’s Android wrapper libraries.
+**Dart**
 
-Binaries
+```dart
+// 1. Get the pre-configured Tor Client
+HttpClient client = _torService.getTorHttpClient();
 
-• libtor.so (fetched from Guardian Project Maven and unpacked at runtime when required)
+// 2. Define target (Must use HTTPS to trigger CONNECT tunnel)
+// Tor will unwrap the HTTPS and deliver to the hidden service.
+String target = "https://facebookwkhpilnemxj7asaniu7vnjjbiltxjqhye3mhbshg7kx5tfyd.onion";
 
+try {
+  var request = await client.getUrl(Uri.parse(target));
+  var response = await request.close();
+  var body = await response.transform(utf8.decoder).join();
+  print("Response: $body");
+} catch (e) {
+  print("Request failed: $e");
+}
+```
 
-Ports
+---
 
-• SOCKS5: 9050
+### Architecture & Ports
 
-• HTTP Tunnel: 9080
+This plugin manages specific port mappings to enable P2P functionality.
 
-• Hidden Service: 80 (Tor) mapped to 8080 (local)
+| Type           | Port      | Description                                                                     |
+| -------------- | --------- | ------------------------------------------------------------------------------- |
+| SOCKS5         | 9050      | Standard Tor SOCKS proxy.                                                       |
+| HTTP Tunnel    | 9080      | Outbound. Use this for Flutter HttpClient. Requires https://.                   |
+| Hidden Service | 80 → 8080 | Inbound. Traffic sent to your .onion on port 80 is forwarded to localhost:8080. |
 
+---
 
-# Disclaimer
+### Troubleshooting
 
-This plugin is intended for educational and research purposes. While Tor enhances privacy, your application may still expose identifying information depending on its design. Understand Tor’s limitations before relying on it in sensitive contexts.
+* **502 Bad Gateway / Connection Closed:**
+  You sent a plain `http://` request to the proxy. Change your URL to `https://` to force Dart to use the required CONNECT method.
+
+* **HandshakeException:**
+  You're using `https://` but haven't configured the client to trust the certificate.
+  Use:
+
+  ```dart
+  client.badCertificateCallback = (cert, host, port) => true;
+  ```
+
+---
+
+### Disclaimer
+
+This plugin is intended for educational and research purposes. While Tor enhances privacy, your application logic may still expose identifying information. Understand Tor’s limitations before relying on it in sensitive contexts.
